@@ -1,0 +1,27 @@
+# multi_step_qa_langchain 설정 — 모든 경로는 저장소 루트 기준.
+
+paths:
+  chunks: data/chunks      # K-DART 청크 코퍼스(데이터셋 저장소에서 복사) — build_index용
+  index: data/index        # ChromaDB 영속 디렉터리
+
+# 임베딩 + RAG (데이터셋 calibration과 동일)
+rag:
+  provider: openai
+  model: text-embedding-3-small
+  embedding_dim: 1536
+  collection_name: kdart_chunks
+  top_k: 5
+  embedding_batch_size: 100
+  cost_per_1m_tokens_usd: 0.02
+
+# 청크 설정 (build_index 시 참조 — 데이터셋과 동일 512/50)
+chunker:
+  tokenizer: cl100k_base
+  chunk_tokens: 512
+  overlap_tokens: 50
+
+# Executor (논문 v5 통제변수)
+executor:
+  model: gpt-4o-mini
+  max_iterations: 8
+  numeric_rel_tol: 0.01    # TSR 채점 허용 상대오차(1%)
