@@ -1,13 +1,21 @@
 # multi_step_qa_langchain — 실험 의존성 (Python 3.11/3.12)
+# 검증된 LangChain 0.3.x 라인. 느슨하게 풀면 pip가 langchain 1.x / openai 2.x 메이저를 끌어와 충돌이 난다.
+# 다음 불변식을 지킬 것:
+#   - langchain은 0.3.x, langchain-core는 <1.0(0.3.x), langchain-openai는 <1.0(0.3.x), openai는 1.x(<2)
+#   - `from langchain_core.callbacks import UsageMetadataCallbackHandler` 가 import 되어야 함
+
+# LangChain Agent (A1) — V0 경로
+langchain==0.3.30
+langchain-core==0.3.86
+langchain-community==0.3.30
+langchain-openai==0.3.35   # langchain-openai 0.3.35는 openai>=1.104.2 를 요구
+
+# OpenAI SDK — 1.x 라인에 고정 (2.x 금지)
+openai>=1.104.2,<2
+
 # 임베딩/인덱스/토크나이저는 K-DART-QA 데이터셋 저장소와 동일 버전으로 고정
-openai==1.59.6
 chromadb==0.5.23
 tiktoken==0.8.0
 numpy>=1.26
 pyyaml==6.0.2
 python-dotenv==1.0.1
-
-# LangChain Agent (A1)
-langchain==0.3.30
-langchain-openai>=0.2,<0.4
-langchain-community>=0.3,<0.4

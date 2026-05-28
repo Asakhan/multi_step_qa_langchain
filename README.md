@@ -13,7 +13,8 @@
 ```
 multi_step_qa_langchain/
 ├─ config.yaml              # rag/executor 설정
-├─ requirements.txt
+├─ requirements.txt         # 핵심 의존성(버전 불변식 주석 포함)
+├─ requirements-lock.txt    # 검증된 전체 환경 동결본(정확한 재현용)
 ├─ .env.example             # 복사 → .env 에 OPENAI_API_KEY
 ├─ data/
 │  ├─ kdart_qa.jsonl        # 40문항 (포함)
@@ -63,6 +64,14 @@ python -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
+
+> 의존성은 **LangChain 0.3.x / OpenAI SDK 1.x** 라인에 고정돼 있다(`requirements.txt` 상단 주석의
+> 버전 불변식 참고). 느슨하게 풀면 pip 가 langchain 1.x / openai 2.x 메이저를 끌어와 충돌이 난다.
+> 검증된 환경을 **그대로** 재현하려면 동결본을 쓴다(Python 3.11/3.12 권장):
+>
+> ```powershell
+> pip install -r requirements-lock.txt
+> ```
 
 ### 4) API 키 설정
 
