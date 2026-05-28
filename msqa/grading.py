@@ -43,17 +43,25 @@ def grade(predicted: str, gold: Any, *, rel_tol: float = 0.01) -> bool:
     return normalize_text(predicted) == normalize_text(gold)
 
 
-# Executor 출력에서 "최종답: <값>" 을 뽑아내는 정규식 (calibrator와 동일 규약)
-FINAL_ANSWER_RE = re.compile(r"최종답\s*[:：]\s*(.+?)\s*$", re.MULTILINE)
+# Executor 출력에서 "최종답: <값>" 을 뽑아내는 정규식 (calibrator와 동일 규약).
+# 빈 최종답("최종답:" 뒤 공백/빈줄) 도 "매치"로 잡기 위해 캡처를 (.*?) 로 둔다.
+# (calibrator 의 (.+?) 와 달리 빈 값을 매치로 인식하되, 빈 값은 extract_final 에서 None 처리.)
+FINAL_ANSWER_RE = re.compile(r"최종답\s*[:：]\s*(.*?)\s*$", re.MULTILINE)
 
 
 def extract_final(text: str) -> str | None:
-    """모델 출력 텍스트에서 최종답을 추출. 없으면 마지막 비어있지 않은 줄."""
+    """모델 출력 텍스트에서 최종답을 추출.
+
+    - "최종답:" 매치가 있고 값이 (공백 제거 후) 비어있지 않으면 그 값을 반환.
+    - "최종답:" 매치가 있으나 값이 비어 있으면 None 반환(윗줄을 주워오지 않음).
+    - "최종답:" 매치가 아예 없을 때만 폴백(마지막 비어있지 않은 줄)을 사용.
+    """
     if not text:
         return None
     matches = FINAL_ANSWER_RE.findall(text)
     if matches:
-        return matches[-1].strip()
+        val = matches[-1].strip()
+        return val if val else None
     for line in reversed(text.splitlines()):
         if line.strip():
             return line.strip()

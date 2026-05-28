@@ -21,7 +21,7 @@ from .grading import extract_final, grade
 from .tools import make_tools
 
 EXECUTOR_MODEL = "gpt-4o-mini"   # 논문 v5 통제변수
-MAX_ITERATIONS = 8               # 도구 호출 루프 상한
+MAX_ITERATIONS = 12              # 도구 호출 루프 상한
 NUMERIC_REL_TOL = 0.01           # TSR 채점 허용 상대오차(1%)
 
 SYSTEM_PROMPT = (
@@ -88,10 +88,15 @@ def run_one(
     """문항 1건을 V0 로 실행하고 전체 실행 로그 dict 를 반환."""
     evidence_log: list[dict] = []
     tools = make_tools(retriever, evidence_log)
+    # make_tools 는 list 호환 _ToolList 를 반환하고 검색 통계를 .search_stats 로 노출한다.
+    # (튜플 언패킹을 쓰지 않는 이유: check.py 가 반환값을 그대로 순회하므로 list 호환을 유지.)
+    search_stats = getattr(tools, "search_stats", {"search_calls": 0, "cache_hits": 0})
     agent = _build_agent(tools, model=model)
 
     t0 = time.perf_counter()
     error = None
+    n_steps = 0
+    stopped_max_iter = False
     try:
         usage_cb = UsageMetadataCallbackHandler()
         result = agent.invoke(
@@ -99,8 +104,15 @@ def run_one(
             config={"callbacks": [usage_cb]},
         )
         raw_output = result.get("output", "") or ""
-        steps = _serialize_steps(result.get("intermediate_steps", []))
+        raw_steps = result.get("intermediate_steps", [])
+        n_steps = len(raw_steps)
+        steps = _serialize_steps(raw_steps)
         in_tok, out_tok, tot_tok = _sum_usage(usage_cb.usage_metadata)
+        # max_iterations 도달 판정: (a) 종료 문구 또는 (b) 스텝 수가 상한 이상.
+        stopped_max_iter = (
+            "stopped due to max iterations" in raw_output
+            or n_steps >= MAX_ITERATIONS
+        )
     except Exception as e:  # noqa: BLE001
         raw_output, steps = "", []
         in_tok = out_tok = tot_tok = 0
@@ -129,6 +141,11 @@ def run_one(
         "reasoning_trace": steps,
         "retrieved_evidence": evidence_log,
         "gold_evidence_chunks": item.gold_evidence_chunks,
+        # 계측(보강): max_iterations 도달 여부·스텝 수·검색/캐시 통계
+        "stopped_max_iter": stopped_max_iter,
+        "n_steps": n_steps,
+        "search_calls": search_stats.get("search_calls", 0),
+        "cache_hits": search_stats.get("cache_hits", 0),
         # 비용·지연
         "prompt_tokens": in_tok,
         "completion_tokens": out_tok,

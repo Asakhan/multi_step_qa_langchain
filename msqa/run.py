@@ -26,6 +26,68 @@ from .datasets import load_items
 from .executor_langchain import run_one
 from .retriever import Retriever, get_retriever
 
+try:
+    from openai import RateLimitError
+except Exception:  # noqa: BLE001 — openai 미존재/구버전 시 문자열 매칭으로 폴백
+    RateLimitError = None
+
+
+def _is_rate_limit(obj) -> bool:
+    """예외/에러 메시지에 레이트리밋 신호가 있으면 True."""
+    s = str(obj)
+    return "Rate limit" in s or "429" in s or "RateLimitError" in s
+
+
+def _failure_record(it, run_index, model, framework, verifier, err) -> dict:
+    """레이트리밋 재시도 소진 시 기록할 정상 실패 레코드(run_one 스키마 호환)."""
+    return {
+        "qid": it.qid, "source": it.source, "lang": it.lang,
+        "task_type": it.task_type, "framework": framework, "verifier": verifier,
+        "run_index": run_index, "model": model,
+        "query": it.question, "gold_answer": it.gold_answer,
+        "answer_raw": "", "predicted": None, "correct": False,
+        "reasoning_trace": [], "retrieved_evidence": [],
+        "gold_evidence_chunks": it.gold_evidence_chunks,
+        "stopped_max_iter": False, "n_steps": 0,
+        "search_calls": 0, "cache_hits": 0,
+        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+        "time_sec": 0.0, "error": f"{type(err).__name__}: {err}",
+    }
+
+
+def _run_one_with_retry(it, retr, *, run_index, model, framework, verifier) -> dict:
+    """run_one 호출. 429(RateLimit) 면 60초 대기 후 최대 2회 재시도.
+
+    run_one 은 내부에서 예외를 삼키고 error 필드로 반환할 수 있으므로
+    (a) 발생 예외와 (b) 반환 레코드의 error 문자열을 모두 검사한다.
+    재시도를 모두 소진하면 정상 실패 레코드를 반환하고 호출부는 다음 문항으로 진행.
+    """
+    attempt = 0
+    while True:
+        try:
+            rec = run_one(
+                it, retr,
+                run_index=run_index, model=model,
+                framework=framework, verifier=verifier,
+            )
+        except Exception as e:  # noqa: BLE001
+            is_rl = (RateLimitError is not None and isinstance(e, RateLimitError)) \
+                or _is_rate_limit(e)
+            if is_rl and attempt < 2:
+                attempt += 1
+                print(f"  RateLimit hit -> sleeping 60s (retry {attempt}/2)")
+                time.sleep(60)
+                continue
+            if is_rl:
+                return _failure_record(it, run_index, model, framework, verifier, e)
+            raise
+        if rec.get("error") and _is_rate_limit(rec["error"]) and attempt < 2:
+            attempt += 1
+            print(f"  RateLimit hit -> sleeping 60s (retry {attempt}/2)")
+            time.sleep(60)
+            continue
+        return rec
+
 
 def _done_keys(out_path: Path) -> set[tuple[str, int]]:
     done = set()
@@ -78,7 +140,7 @@ def main() -> None:
         for run_index in range(1, args.repeats + 1):
             if (it.qid, run_index) in done:
                 continue
-            rec = run_one(
+            rec = _run_one_with_retry(
                 it, retr,
                 run_index=run_index, model=args.model,
                 framework=args.framework, verifier=args.verifier,
@@ -88,8 +150,12 @@ def main() -> None:
             n_done += 1
             n_ok += int(bool(rec["correct"]))
             status = "OK " if rec["correct"] else ("ERR" if rec["error"] else "x  ")
+            maxit = " MAXIT" if rec.get("stopped_max_iter") else ""
             print(f"  [{n_done}/{total - len(done)}] {status} {it.qid} run{run_index} "
-                  f"tok={rec['total_tokens']} t={rec['time_sec']}s pred={rec['predicted']!r}")
+                  f"tok={rec['total_tokens']} t={rec['time_sec']}s "
+                  f"steps={rec.get('n_steps')}{maxit} pred={rec['predicted']!r}")
+            # 문항 사이 레이트리밋 완화(실제로 실행한 경우에만; skip 은 위 continue 로 생략).
+            time.sleep(2.0)
     fout.close()
 
     elapsed = time.perf_counter() - t_start
