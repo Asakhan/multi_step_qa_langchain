@@ -31,15 +31,37 @@ def normalize_text(s: str) -> str:
 
 
 def grade(predicted: str, gold: Any, *, rel_tol: float = 0.01) -> bool:
-    """수치면 ±rel_tol 상대오차 비교, 아니면 정규화 문자열 정확일치(EM)."""
+    """수치면 ±rel_tol 상대오차 비교, 아니면 정규화 문자열 정확일치(EM).
+
+    비율-퍼센트 단위 정규화: % 표기 차이 또는 100배 자릿수 차이(소수 ratio vs
+    %표기 없는 백분율)가 있으면 ÷100 변환을 추가 후보로 두고, 둘 중 하나라도
+    ±rel_tol 이내면 정답으로 본다. 그 외 동작은 동일.
+    """
     if predicted is None or predicted == "":
         return False
     gnum = parse_number(gold) if not isinstance(gold, (int, float)) else float(gold)
     pnum = parse_number(predicted)
     if gnum is not None and pnum is not None:
-        if gnum == 0:
-            return abs(pnum) < rel_tol
-        return abs(pnum - gnum) / abs(gnum) <= rel_tol
+        p_has_pct = "%" in str(predicted)
+        g_has_pct = "%" in str(gold)
+        candidates = [(gnum, pnum)]
+        if p_has_pct and not g_has_pct:
+            candidates.append((gnum, pnum / 100.0))
+        elif g_has_pct and not p_has_pct:
+            candidates.append((gnum / 100.0, pnum))
+        else:
+            # % 표기 없지만 자릿수가 100배 차이날 때 (FinQA 소수 vs %표기 없는 백분율)
+            if abs(gnum) < 1 and abs(pnum) >= 1:
+                candidates.append((gnum, pnum / 100.0))
+            elif abs(pnum) < 1 and abs(gnum) >= 1:
+                candidates.append((gnum / 100.0, pnum))
+        for g, p in candidates:
+            if g == 0:
+                if abs(p) < rel_tol:
+                    return True
+            elif abs(p - g) / abs(g) <= rel_tol:
+                return True
+        return False
     return normalize_text(predicted) == normalize_text(gold)
 
 

@@ -84,8 +84,15 @@ def run_one(
     model: str = EXECUTOR_MODEL,
     framework: str = "langchain",
     verifier: str = "V0",
+    input_text: str | None = None,
 ) -> dict:
-    """문항 1건을 V0 로 실행하고 전체 실행 로그 dict 를 반환."""
+    """문항 1건을 실행하고 전체 실행 로그 dict 를 반환.
+
+    Executor 에게 전달하는 입력은 기본적으로 item.question 이지만,
+    input_text 가 주어지면(예: V1 재시도용 critique 포함 프롬프트) 그 문자열을
+    대신 보낸다. 시스템 프롬프트·도구·검색 로직은 두 경로에서 완전히 동일하며,
+    채점은 항상 item.gold_answer 기준이다.
+    """
     evidence_log: list[dict] = []
     tools = make_tools(retriever, evidence_log)
     # make_tools 는 list 호환 _ToolList 를 반환하고 검색 통계를 .search_stats 로 노출한다.
@@ -100,7 +107,7 @@ def run_one(
     try:
         usage_cb = UsageMetadataCallbackHandler()
         result = agent.invoke(
-            {"input": item.question},
+            {"input": input_text if input_text is not None else item.question},
             config={"callbacks": [usage_cb]},
         )
         raw_output = result.get("output", "") or ""
@@ -153,3 +160,37 @@ def run_one(
         "time_sec": round(elapsed, 4),
         "error": error,
     }
+
+
+# V1 재시도용 입력 프롬프트 — 원래 질문 + 검증자 critique + 재작성 지시.
+RETRY_INPUT_TEMPLATE = (
+    "{query}\n\n"
+    "[이전 답변에 대한 검증자 피드백]\n"
+    "{critique}\n\n"
+    "위 피드백을 반영해 처음부터 다시 답변하세요. "
+    "마지막 줄은 반드시 '최종답: <값>' 형식으로 끝내야 합니다."
+)
+
+
+def run_one_retry(
+    item: QAItem,
+    retriever,
+    critique: str,
+    *,
+    run_index: int,
+    model: str = EXECUTOR_MODEL,
+    framework: str = "langchain",
+    verifier: str = "V1",
+) -> dict:
+    """V1 FAIL 후 재시도 1회 실행.
+
+    입력 문자열만 RETRY_INPUT_TEMPLATE 로 다르고, 그 외 동작(새 AgentExecutor·
+    새 도구·새 evidence_log·새 캐시)은 run_one 과 완전히 동일하다.
+    """
+    retry_input = RETRY_INPUT_TEMPLATE.format(query=item.question, critique=critique or "")
+    return run_one(
+        item, retriever,
+        run_index=run_index, model=model,
+        framework=framework, verifier=verifier,
+        input_text=retry_input,
+    )

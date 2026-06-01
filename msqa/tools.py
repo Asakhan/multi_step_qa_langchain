@@ -55,7 +55,7 @@ class _ToolList(list):
     search_stats: dict
 
 
-def make_tools(retriever, evidence_log: list[dict]):
+def make_tools(retriever, evidence_log: list[dict], chunk_char_cap: int | None = None):
     """retriever.search 를 감싼 doc_search + calculator 를 LangChain 도구로 반환.
 
     반환: _ToolList (list 호환). tool.search_stats 에 {"search_calls","cache_hits"}
@@ -63,7 +63,14 @@ def make_tools(retriever, evidence_log: list[dict]):
     (문항 1건 범위). 동일(정규화) 질의를 다시 검색하면 retriever.search 를
     재호출하지 않고 직전 청크를 안내 문구와 함께 반환하며, evidence_log 에는
     중복 기록하지 않는다.
+
+    chunk_char_cap 이 주어지면 Executor 가 보는 출력 텍스트의 각 청크 본문을 그
+    글자수까지 자른다(잘림 표시 부착). 명시하지 않으면 retriever.chunk_char_cap
+    에서 가져오므로 호출부(executor) 시그니처 변경 없이도 캡을 흘려보낼 수 있다.
+    evidence_log 에 적재되는 text 는 항상 잘리지 않은 원본을 유지한다(사후 분석용).
     """
+    if chunk_char_cap is None:
+        chunk_char_cap = getattr(retriever, "chunk_char_cap", None)
     # 캐시·통계는 문항별 호출(run_one 1회)마다 새로 만들어지므로 자연히 초기화된다.
     _cache: dict[str, list] = {}
     _result_keys: set[tuple] = set()   # 이미 본 결과집합(top-k chunk_id 튜플)
@@ -73,12 +80,16 @@ def make_tools(retriever, evidence_log: list[dict]):
         # strip + 내부 공백 1칸 + 소문자
         return " ".join(str(query).split()).lower()
 
+    def _fmt(h: dict) -> str:
+        text = h.get("text", "") or ""
+        if chunk_char_cap and len(text) > chunk_char_cap:
+            text = text[:chunk_char_cap] + "... [잘림]"
+        return f"[{h.get('chunk_id')}] {text}"
+
     def _format(hits: list) -> str:
         if not hits:
             return "검색 결과 없음."
-        return "\n\n".join(
-            f"[{h.get('chunk_id')}] {h.get('text')}" for h in hits
-        )
+        return "\n\n".join(_fmt(h) for h in hits)
 
     def doc_search(query: str) -> str:
         """재무 공시 문서에서 질의와 관련된 근거 청크를 검색한다.
